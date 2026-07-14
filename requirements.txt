@@ -1,0 +1,14 @@
+# Core
+torch>=2.1
+numpy>=1.24
+
+# Data / rendering for the toy environments and overlay-extraction demo
+pillow>=9.5
+imageio>=2.31
+
+# Nice-to-haves for the examples and notebooks
+matplotlib>=3.7
+tqdm>=4.65
+
+# Testing
+pytest>=7.4

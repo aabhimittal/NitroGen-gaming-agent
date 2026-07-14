@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nitrogen-gaming-agent"
+version = "0.1.0"
+description = "An educational, end-to-end re-implementation of NitroGen: an open vision-action foundation model for generalist gaming agents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Abhishek Mittal" }]
+keywords = [
+    "foundation-model",
+    "vision-action",
+    "flow-matching",
+    "behavior-cloning",
+    "gaming-agents",
+    "imitation-learning",
+]
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+    "pillow>=9.5",
+    "imageio>=2.31",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "matplotlib>=3.7"]
+
+[project.scripts]
+nitrogen-generate = "scripts.generate_data:main"
+nitrogen-train = "scripts.train:main"
+nitrogen-eval = "scripts.evaluate:main"
+nitrogen-demo = "scripts.demo:main"
+
+[tool.setuptools.packages.find]
+include = ["nitrogen*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
