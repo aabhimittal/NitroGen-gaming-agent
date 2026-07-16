@@ -133,8 +133,11 @@ def few_shot_transfer(
     same handful of episodes — mirroring NitroGen's "up to 52% relative improvement
     on low-data tasks".
 
-    Returns success rates for ``from_scratch`` and ``pretrained`` plus the relative
-    improvement.
+    Returns success rates for ``from_scratch`` and ``pretrained`` plus the absolute
+    and relative improvement. ``relative_improvement`` is ``None`` when the
+    from-scratch baseline is ~0% (the ratio is undefined — a common outcome at this
+    toy scale, since a fresh model often learns nothing from a dozen episodes); use
+    ``absolute_improvement`` in that case.
     """
     # Imported here to avoid a circular import (trainer imports the model, etc.).
     from nitrogen.data.synthetic import collect_dataset
@@ -150,11 +153,14 @@ def few_shot_transfer(
 
     scratch = evaluate_game(scratch_ema.shadow, game, episodes=eval_episodes)
     finetuned = evaluate_game(ft_ema.shadow, game, episodes=eval_episodes)
-    rel = (finetuned - scratch) / max(scratch, 1e-6)
+    # Relative improvement is only meaningful when the baseline is non-trivial;
+    # otherwise the ratio blows up (dividing by ~0), so report it as undefined.
+    rel = (finetuned - scratch) / scratch if scratch > 1e-6 else None
     return {
         "game": game,
         "n_episodes": n_episodes,
         "from_scratch": scratch,
         "pretrained": finetuned,
+        "absolute_improvement": finetuned - scratch,
         "relative_improvement": rel,
     }

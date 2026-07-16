@@ -35,10 +35,13 @@ def main() -> None:
 
     if args.few_shot:
         r = few_shot_transfer(model, game=args.few_shot)
+        rel = r["relative_improvement"]
+        rel_str = f"{rel:+.0%}" if rel is not None else "n/a (from-scratch ≈ 0%)"
         print(f"Few-shot transfer to '{r['game']}' ({r['n_episodes']} episodes):")
         print(f"  from scratch : {r['from_scratch']:.2%}")
         print(f"  pretrained   : {r['pretrained']:.2%}")
-        print(f"  relative gain: {r['relative_improvement']:+.0%}")
+        print(f"  absolute gain: {r['absolute_improvement']:+.2%}")
+        print(f"  relative gain: {rel_str}")
     elif args.transfer:
         report = transfer_report(model, **kwargs)
         print("Transfer report (zero-shot success rate):")
