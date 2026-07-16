@@ -61,8 +61,10 @@ def main() -> None:
     #    vs a model trained from scratch on the same handful of demos.
     print("\n[transfer] few-shot adaptation to the unseen game (chaser):")
     r = few_shot_transfer(policy, game="chaser", n_episodes=12, finetune_steps=400)
+    rel = r["relative_improvement"]
+    rel_str = f"relative gain {rel:+.0%}" if rel is not None else "from-scratch ≈ 0%"
     print(f"    from scratch : {r['from_scratch']:.0%}")
-    print(f"    pretrained   : {r['pretrained']:.0%}   (relative gain {r['relative_improvement']:+.0%})")
+    print(f"    pretrained   : {r['pretrained']:.0%}   ({rel_str})")
 
 
 if __name__ == "__main__":
