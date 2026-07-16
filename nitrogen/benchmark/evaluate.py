@@ -55,6 +55,10 @@ def run_episode(
         action = chunk[idx]
         idx += 1
         frame, done, info = env.step(action)
+        if info["success"]:
+            # Continuous games latch success but keep running; stop as soon as the
+            # task is first accomplished (task-completion is the metric we want).
+            return True
     return bool(info["success"])
 
 
@@ -99,12 +103,58 @@ def transfer_report(
 ) -> Dict[str, Dict[str, float]]:
     """Compare success on *seen* training games vs *held-out* unseen games.
 
-    This is the experiment that demonstrates cross-game generalization: a strong
-    generalist should retain non-trivial success on a game it never trained on.
+    This is the zero-shot view. At the paper's scale the model retains non-trivial
+    success on unseen games; at this toy scale a policy trained on just two games
+    overfits their exact appearance, so zero-shot success on a genuinely novel game
+    is typically near zero — the interesting transfer signal here is *few-shot*
+    (see :func:`few_shot_transfer`).
     """
     train_games = train_games or TRAIN_GAMES
     heldout_games = heldout_games or HELDOUT_GAMES
     return {
         "seen": evaluate_suite(model, train_games, episodes=episodes, **kwargs),
         "unseen": evaluate_suite(model, heldout_games, episodes=episodes, **kwargs),
+    }
+
+
+def few_shot_transfer(
+    pretrained: NitroGen,
+    game: str = "chaser",
+    n_episodes: int = 12,
+    finetune_steps: int = 400,
+    eval_episodes: int = 25,
+    seed: int = 0,
+) -> Dict[str, float]:
+    """The paper's real transfer claim: **low-data** adaptation to a new game.
+
+    Fine-tunes the ``pretrained`` policy on a *small* number of demonstrations from
+    an unseen ``game`` and compares it to a model trained from scratch on the exact
+    same data. The pretrained features should reach much higher success from the
+    same handful of episodes — mirroring NitroGen's "up to 52% relative improvement
+    on low-data tasks".
+
+    Returns success rates for ``from_scratch`` and ``pretrained`` plus the relative
+    improvement.
+    """
+    # Imported here to avoid a circular import (trainer imports the model, etc.).
+    from nitrogen.data.synthetic import collect_dataset
+    from nitrogen.training.config import TrainConfig
+    from nitrogen.training.trainer import train
+
+    data = collect_dataset([game], episodes_per_game=n_episodes, seed=seed)
+    cfg = TrainConfig(games=[game], steps=finetune_steps, batch_size=48,
+                      log_every=finetune_steps, seed=seed)
+
+    _, scratch_ema = train(cfg, episodes=data)
+    _, ft_ema = train(cfg, episodes=data, init_model=pretrained)
+
+    scratch = evaluate_game(scratch_ema.shadow, game, episodes=eval_episodes)
+    finetuned = evaluate_game(ft_ema.shadow, game, episodes=eval_episodes)
+    rel = (finetuned - scratch) / max(scratch, 1e-6)
+    return {
+        "game": game,
+        "n_episodes": n_episodes,
+        "from_scratch": scratch,
+        "pretrained": finetuned,
+        "relative_improvement": rel,
     }

@@ -138,21 +138,26 @@ class DiTBlock(nn.Module):
         hidden = int(d * cfg.mlp_ratio)
         self.mlp = nn.Sequential(nn.Linear(d, hidden), nn.GELU(), nn.Linear(hidden, d))
 
-        # AdaLN-Zero: produce shift/scale/gate for self-attn (3), cross-attn (3),
-        # and MLP (3) = 9 * d values from the time embedding.
-        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(cfg.time_embed_dim, 9 * d))
+        # AdaLN modulation from the flow time. Self-attn and MLP use AdaLN-**Zero**
+        # (a zero-init residual gate) for stable training. Cross-attention to the
+        # image is deliberately **always-on** (no zero gate): it is the only path
+        # carrying *spatial* image information ("where is the object"), and if it
+        # were zero-gated the policy would sit at the image-independent marginal
+        # and never learn to look at the frame. So we emit shift/scale/gate for
+        # self-attn (3) + shift/scale for cross-attn (2) + shift/scale/gate for
+        # MLP (3) = 8 * d values.
+        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(cfg.time_embed_dim, 8 * d))
         nn.init.zeros_(self.ada[-1].weight)
         nn.init.zeros_(self.ada[-1].bias)
 
     def forward(self, x: torch.Tensor, context: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         (sa_shift, sa_scale, sa_gate,
-         ca_shift, ca_scale, ca_gate,
-         mlp_shift, mlp_scale, mlp_gate) = self.ada(c).chunk(9, dim=-1)
+         ca_shift, ca_scale,
+         mlp_shift, mlp_scale, mlp_gate) = self.ada(c).chunk(8, dim=-1)
 
         x = x + sa_gate.unsqueeze(1) * self.self_attn(modulate(self.norm1(x), sa_shift, sa_scale))
-        x = x + ca_gate.unsqueeze(1) * self.cross_attn(
-            modulate(self.norm2(x), ca_shift, ca_scale), context
-        )
+        # Always-on cross-attention (no gate) so the image is read from step 0.
+        x = x + self.cross_attn(modulate(self.norm2(x), ca_shift, ca_scale), context)
         x = x + mlp_gate.unsqueeze(1) * self.mlp(modulate(self.norm3(x), mlp_shift, mlp_scale))
         return x
 

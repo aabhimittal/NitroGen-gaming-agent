@@ -33,10 +33,10 @@ def test_experts_are_competent():
 
 def test_dataset_chunking():
     eps = collect_dataset(["reacher"], episodes_per_game=2, noise=0.1)
-    ds = FrameActionChunkDataset(eps, chunk_size=16)
+    ds = FrameActionChunkDataset(eps, chunk_size=8)
     frame, chunk = ds[0]
     assert frame.shape == (3, 256, 256)
-    assert chunk.shape == (16, 18)
+    assert chunk.shape == (8, 18)
     assert float(chunk.min()) >= -1.0 and float(chunk.max()) <= 1.0
 
 

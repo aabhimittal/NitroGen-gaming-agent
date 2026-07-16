@@ -103,9 +103,14 @@ class VisionEncoder(nn.Module):
         self.cfg = cfg or VisionConfig()
         c = self.cfg
 
-        # Patchify with a strided conv: each patch -> one token vector.
+        # Patchify with a strided conv: each patch -> one token vector. We prepend
+        # two **CoordConv** channels (normalized x and y coordinate maps) to the
+        # RGB input. Plain convolutions/ViTs are translation-equivariant and famously
+        # poor at reporting the *absolute position* of a feature — but our control
+        # tasks are exactly "where is the bright object → push toward/away from it",
+        # so we hand the network the coordinates explicitly. (Liu et al., 2018.)
         self.patch_embed = nn.Conv2d(
-            c.in_channels, c.width, kernel_size=c.patch_size, stride=c.patch_size
+            c.in_channels + 2, c.width, kernel_size=c.patch_size, stride=c.patch_size
         )
         # Learned positional embedding (SigLIP uses learned, no [CLS] token).
         self.pos_embed = nn.Parameter(torch.zeros(1, c.num_patches, c.width))
@@ -145,6 +150,11 @@ class VisionEncoder(nn.Module):
                 mode="bilinear", align_corners=False,
             )
         x = (pixels - self.pixel_mean) / self.pixel_std
+        # Append normalized coordinate channels (CoordConv).
+        b, _, h, w = x.shape
+        ys = torch.linspace(-1, 1, h, device=x.device, dtype=x.dtype).view(1, 1, h, 1).expand(b, 1, h, w)
+        xs = torch.linspace(-1, 1, w, device=x.device, dtype=x.dtype).view(1, 1, 1, w).expand(b, 1, h, w)
+        x = torch.cat([x, xs, ys], dim=1)    # (B, 5, H, W)
         x = self.patch_embed(x)              # (B, width, H/ps, W/ps)
         x = x.flatten(2).transpose(1, 2)     # (B, num_patches, width)
         x = x + self.pos_embed

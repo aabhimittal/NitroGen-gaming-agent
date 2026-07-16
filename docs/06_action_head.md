@@ -66,6 +66,20 @@ DiTs train stably. The final output projection is also zero-initialized, so the
 model's initial velocity prediction is exactly zero (a well-behaved starting
 point for the ODE).
 
+### One deliberate exception: cross-attention is *always-on*
+
+Self-attention and the MLP use the zero-init gate above. **Cross-attention to the
+image does not** — it is applied ungated from step 0 (only its AdaLN shift/scale
+are used). This is intentional and was a real bug the first time round: the image
+is the *only* signal telling the policy what to do, but with flow matching's large
+irreducible loss floor, a zero-initialized image gate feels almost no pressure to
+open. The policy then happily sits at the image-independent marginal action and
+**never learns to look at the frame**. Forcing cross-attention on from the start
+(as π0 / GR00T's action expert effectively do, by letting action tokens attend to
+vision tokens in every layer) fixes it. See
+[`DiTBlock`](../nitrogen/models/action_head.py) and the training notes in
+[ch 7](07_training.md).
+
 ## Putting it together
 
 ```python

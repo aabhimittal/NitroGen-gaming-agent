@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m scripts.generate_data --games reacher dodger --episodes 80 --out data/train.npz
+    python -m scripts.generate_data --games reacher avoider --episodes 80 --out data/train.npz
     python -m scripts.generate_data --overlay-demo   # reproduce the R^2 / accuracy metrics
 """
 

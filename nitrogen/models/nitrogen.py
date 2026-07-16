@@ -38,7 +38,9 @@ class NitroGenConfig:
     """
 
     action_dim: int = ACTION_DIM
-    chunk_size: int = 16
+    # Chunk horizon T. The paper uses 16; the toy tasks here use a shorter 8-step
+    # chunk, which keeps the whole chunk comfortably predictable from one frame.
+    chunk_size: int = 8
     # NOTE on resolution: the *paper* encodes 256x256 frames (256 patch tokens).
     # The default here is 128x128 (64 tokens) purely so the whole pipeline trains
     # in minutes on a CPU — the encoder transparently resizes 256px env frames

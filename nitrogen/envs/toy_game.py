@@ -2,11 +2,20 @@
 
 NitroGen's second pillar is a **multi-game benchmark** that measures *cross-game
 generalization*. We obviously can't ship 1,000 real titles, so this module
-provides a small family of visually distinct 2D games that nonetheless exercise
-the same generalist skill: *look at the frame, move the left stick toward what
-matters*. Because every game is controlled through the shared gamepad interface
-(:mod:`nitrogen.action_space`), one policy can be trained across several games
-and evaluated on a held-out one — exactly the transfer setup from the paper.
+provides a small family of visually distinct games that all exercise the same
+generalist skill: *look at the frame and move the left stick relative to the one
+salient object on screen* — toward it, or away from it, depending on the game.
+
+Agent-centric framing
+---------------------
+Every game is rendered **agent-centric**: the controllable avatar is a fixed
+reticle at the center of the screen, and the world is drawn relative to it (the
+way most first- and third-person games render around the player). Pushing the
+stick moves the avatar, which slides the salient object across the view. This is
+deliberate: it turns each task into "find the one bright object and push toward
+/ away from it", a single-object visuomotor skill that a small vision-action
+model can actually *learn* from pixels — while keeping every NitroGen mechanism
+intact (pixels-in, standardized-gamepad-out, one frame conditioning a chunk).
 
 Each game implements the same small interface:
 
@@ -14,8 +23,8 @@ Each game implements the same small interface:
     frame, done, info = env.step(action)    # action: raw gamepad vector
     expert = env.expert_action(noise=...)   # raw gamepad vector (for BC data)
 
-``info["success"]`` reports task completion. Games are intentionally learnable
-from a single frame, matching NitroGen's frame-only (history-free) conditioning.
+``info["success"]`` reports task completion. Games are learnable from a single
+frame, matching NitroGen's frame-only (history-free) conditioning.
 """
 
 from __future__ import annotations
@@ -27,6 +36,9 @@ import numpy as np
 from nitrogen.action_space import ACTION_DIM, GamepadAction
 from nitrogen.envs.rendering import Canvas
 
+CENTER = np.array([0.5, 0.5], dtype=np.float32)
+REL_BOUND = 0.44  # keep the salient object on-screen
+
 
 class ToyGame:
     """Base class. Subclasses set colours, dynamics, expert, and success."""
@@ -34,6 +46,11 @@ class ToyGame:
     name: str = "base"
     max_steps: int = 60
     size: int = 256
+    # Continuous games keep running after a "success" (the objective respawns), so
+    # episodes are always full-length. This matters for training: with short
+    # episodes, most action chunks would be dominated by end-of-episode padding
+    # and the policy would just learn to idle. See docs/07_training.md.
+    terminate_on_success: bool = True
 
     def __init__(self, size: int = 256):
         self.size = size
@@ -52,7 +69,7 @@ class ToyGame:
         self.t += 1
         self._apply(action)
         success = self._success()
-        done = success or self.t >= self.max_steps
+        done = (self.terminate_on_success and success) or self.t >= self.max_steps
         return self.render(), done, {"success": success, "t": self.t}
 
     # -- to be implemented by subclasses --------------------------------
@@ -84,70 +101,133 @@ class ToyGame:
         return a.to_vector()
 
 
-# ---------------------------------------------------------------------------
-# Game 1: Reacher — analog of a 3D "go to the objective" task
-# ---------------------------------------------------------------------------
-class ReacherGame(ToyGame):
-    """Drive the blue avatar onto the gold target using the left stick."""
+class AgentCentricGame(ToyGame):
+    """Shared scaffolding: a fixed center reticle + one salient object at ``center + rel``.
 
-    name = "reacher"
-    max_steps = 60
+    Subclasses control the object's colour, how it drifts each step, and whether
+    reaching it is a win (Reacher, Chaser) or a loss (Avoider).
+    """
+
+    speed = 0.05                       # how fast the stick moves the avatar
+    hit_radius = 0.06                  # contact distance between avatar and object
+    spawn_dist = (0.25, 0.40)          # initial |rel| range
+    obj_radius = 0.05
+    obj_color = (240, 240, 240)
+    reticle_color = (225, 228, 240)
+    bg_top = (20, 24, 40)
+    bg_bottom = (40, 30, 60)
+    approach = "toward"                # expert pushes "toward" or "away" from the object
+
+    def _spawn(self):
+        ang = self.rng.uniform(0, 2 * np.pi)
+        dist = self.rng.uniform(*self.spawn_dist)
+        self.rel = np.array([np.cos(ang) * dist, np.sin(ang) * dist], dtype=np.float32)
 
     def _reset_state(self):
-        self.agent = self.rng.uniform(0.15, 0.85, size=2).astype(np.float32)
-        self.target = self.rng.uniform(0.15, 0.85, size=2).astype(np.float32)
-        # Ensure they don't start on top of each other.
-        while np.linalg.norm(self.agent - self.target) < 0.3:
-            self.target = self.rng.uniform(0.15, 0.85, size=2).astype(np.float32)
-        self.speed = 0.04
+        self.reached = False
+        self._spawn()
+
+    def _object_drift(self):
+        """Optional per-step motion of the object, by a fixed rule (override).
+
+        Crucially the motion is a deterministic function of the current state
+        (never a random jump), so the whole action chunk stays predictable from
+        the single conditioning frame — see docs/07_training.md on why that is
+        essential for behavior cloning with action chunks.
+        """
 
     def _apply(self, action: np.ndarray):
-        lx, ly = float(action[0]), float(action[1])
-        self.agent = np.clip(self.agent + self.speed * np.array([lx, ly]), 0.05, 0.95)
+        # Move the avatar: the object slides opposite to the stick push.
+        self.rel = self.rel - self.speed * np.array([action[0], action[1]], dtype=np.float32)
+        self._object_drift()
+        self.rel = np.clip(self.rel, -REL_BOUND, REL_BOUND)
+        if self._dist() < self.hit_radius:
+            self.reached = True
 
-    def _success(self) -> bool:
-        return bool(np.linalg.norm(self.agent - self.target) < 0.06)
+    def _dist(self) -> float:
+        return float(np.linalg.norm(self.rel))
 
     def render(self) -> np.ndarray:
-        c = Canvas(self.size, background=(20, 24, 40))
-        c.fill_gradient((20, 24, 40), (40, 30, 60))
-        c.circle(self.target[0], self.target[1], 0.05, (240, 200, 60))   # gold target
-        c.circle(self.agent[0], self.agent[1], 0.035, (70, 150, 240))    # blue avatar
+        c = Canvas(self.size, background=self.bg_top)
+        c.fill_gradient(self.bg_top, self.bg_bottom)
+        obj = CENTER + self.rel
+        c.circle(float(obj[0]), float(obj[1]), self.obj_radius, self.obj_color)
+        c.crosshair(0.5, 0.5, 0.045, self.reticle_color)
         return c.to_array()
 
     def expert_action(self, noise: float = 0.0) -> np.ndarray:
-        d = self.target - self.agent
-        return self._stick_from_direction(d[0], d[1], noise, self.rng)
+        # Hold still once we're on the objective (a predictable "do nothing").
+        if self.approach == "toward" and self._dist() < self.hit_radius:
+            return GamepadAction().to_vector()
+        d = self.rel if self.approach == "toward" else -self.rel
+        return self._stick_from_direction(float(d[0]), float(d[1]), noise, self.rng)
 
 
 # ---------------------------------------------------------------------------
-# Game 2: Dodger — analog of a 2D platformer reflex task
+# Game 1: Reacher — home the reticle onto a stationary beacon
 # ---------------------------------------------------------------------------
-class DodgerGame(ToyGame):
-    """Slide the paddle at the bottom to avoid the falling red hazard."""
+class ReacherGame(AgentCentricGame):
+    """Home the reticle onto the stationary gold beacon (push the stick toward it).
 
-    name = "dodger"
-    max_steps = 60
+    The beacon does not move and does not respawn, so from any frame the entire
+    future action chunk — steer straight in, then hold on arrival — is a
+    deterministic function of the beacon's position on screen."""
 
-    def _reset_state(self):
-        self.paddle_x = 0.5
-        self.hazard = np.array([self.rng.uniform(0.2, 0.8), 0.0], dtype=np.float32)
-        self.hazard_speed = 0.05
-        self.paddle_speed = 0.06
-        self.alive = True
-
-    def _apply(self, action: np.ndarray):
-        lx = float(action[0])
-        self.paddle_x = float(np.clip(self.paddle_x + self.paddle_speed * lx, 0.08, 0.92))
-        self.hazard[1] += self.hazard_speed
-        if self.hazard[1] >= 0.88:  # reached paddle row
-            if abs(self.hazard[0] - self.paddle_x) < 0.1:
-                self.alive = False
-            # respawn hazard at a new column
-            self.hazard = np.array([self.rng.uniform(0.15, 0.85), 0.0], dtype=np.float32)
+    name = "reacher"
+    max_steps = 30
+    # End the episode on contact: the recorded data is then *pure homing* ("steer
+    # toward the beacon"), with no post-arrival "hold" frames. Those holds, if
+    # kept, dominate the dataset and collapse the policy into doing nothing.
+    terminate_on_success = True
+    speed = 0.03
+    spawn_dist = (0.30, 0.42)
+    hit_radius = 0.06
+    obj_color = (240, 200, 60)
+    bg_top = (20, 24, 40)
+    bg_bottom = (44, 32, 64)
+    approach = "toward"
 
     def _success(self) -> bool:
-        # "Success" = survive the full episode.
+        return self.reached
+
+
+# ---------------------------------------------------------------------------
+# Game 2: Avoider — keep an incoming asteroid away (push the stick AWAY from it)
+# ---------------------------------------------------------------------------
+class AvoiderGame(AgentCentricGame):
+    """Strafe so the single red asteroid never reaches the reticle.
+
+    The asteroid drifts toward the center by a fixed rule; the player pushes it
+    back out. No respawn — one persistent hazard — so the chunk stays predictable.
+    """
+
+    name = "avoider"
+    max_steps = 34
+    speed = 0.05
+    hit_radius = 0.07
+    spawn_dist = (0.34, 0.42)
+    obj_radius = 0.045
+    obj_color = (240, 70, 70)
+    bg_top = (12, 20, 20)
+    bg_bottom = (10, 12, 18)
+    approach = "away"
+    approach_speed = 0.028   # how fast the asteroid closes in on the reticle
+
+    def _reset_state(self):
+        super()._reset_state()
+        self.alive = True
+
+    def _object_drift(self):
+        d = self._dist()
+        if d > 1e-6:
+            self.rel = self.rel - self.approach_speed * self.rel / d
+
+    def _apply(self, action: np.ndarray):
+        super()._apply(action)
+        if self._dist() < self.hit_radius:
+            self.alive = False
+
+    def _success(self) -> bool:
         return self.alive and self.t >= self.max_steps - 1
 
     def step(self, action):
@@ -157,60 +237,41 @@ class DodgerGame(ToyGame):
             info["success"] = False
         return frame, done, info
 
-    def render(self) -> np.ndarray:
-        c = Canvas(self.size, background=(12, 20, 20))
-        c.fill_gradient((12, 24, 24), (10, 12, 18))
-        c.rect(self.paddle_x - 0.1, 0.9, self.paddle_x + 0.1, 0.95, (80, 220, 140))  # paddle
-        c.circle(self.hazard[0], self.hazard[1], 0.04, (240, 70, 70))                # hazard
-        return c.to_array()
-
-    def expert_action(self, noise: float = 0.0) -> np.ndarray:
-        # Move away from the hazard's horizontal position; idle if it's far above.
-        if self.hazard[1] < 0.4:
-            dx = 0.5 - self.paddle_x  # drift to center when safe
-        else:
-            dx = self.paddle_x - self.hazard[0]  # flee horizontally
-            dx = np.sign(dx) if abs(dx) > 1e-3 else 1.0
-        return self._stick_from_direction(dx, 0.0, noise, self.rng)
-
 
 # ---------------------------------------------------------------------------
 # Game 3: Chaser — held-out "unseen" game for transfer experiments
 # ---------------------------------------------------------------------------
-class ChaserGame(ToyGame):
-    """Catch the fleeing green orb. Same 'move toward salient object' skill as
-    Reacher but different colours/dynamics — a good zero-shot transfer target."""
+class ChaserGame(AgentCentricGame):
+    """Catch the fleeing amber orb (push the stick toward it as it runs away).
+
+    This is the **held-out** game used to probe cross-game *transfer*. It is never
+    trained on. It shares Reacher's skill — *approach the warm salient object* —
+    but presents it in a new game: the target now flees, sits on a different
+    background, and is a slightly different shade. A policy that merely memorized
+    Reacher fails here; one that learned the transferable "steer toward the warm
+    object" behavior still catches the orb zero-shot. The orb flees by a fixed
+    rule (away from the avatar), so the action chunk stays predictable."""
 
     name = "chaser"
-    max_steps = 80
+    max_steps = 45
+    terminate_on_success = True    # end on catch → pure-pursuit data, no idling
+    speed = 0.04
+    spawn_dist = (0.28, 0.40)
+    hit_radius = 0.065
+    obj_color = (250, 170, 50)     # warm amber — shares Reacher's "approach" cue
+    obj_radius = 0.05
+    bg_top = (26, 22, 34)
+    bg_bottom = (16, 20, 30)
+    approach = "toward"
+    flee_speed = 0.015      # the orb drifts away from the avatar each step
 
-    def _reset_state(self):
-        self.agent = np.array([0.5, 0.5], dtype=np.float32)
-        self.prey = self.rng.uniform(0.2, 0.8, size=2).astype(np.float32)
-        self.speed = 0.045
-        self.prey_speed = 0.025
-
-    def _apply(self, action: np.ndarray):
-        lx, ly = float(action[0]), float(action[1])
-        self.agent = np.clip(self.agent + self.speed * np.array([lx, ly]), 0.05, 0.95)
-        # Prey drifts away from the agent (slowly), making it a mild pursuit.
-        flee = self.prey - self.agent
-        n = np.linalg.norm(flee) + 1e-6
-        self.prey = np.clip(self.prey + self.prey_speed * flee / n, 0.05, 0.95)
+    def _object_drift(self):
+        d = self._dist()
+        if d > 1e-6:
+            self.rel = self.rel + self.flee_speed * self.rel / d  # move orb outward
 
     def _success(self) -> bool:
-        return bool(np.linalg.norm(self.agent - self.prey) < 0.06)
-
-    def render(self) -> np.ndarray:
-        c = Canvas(self.size, background=(30, 18, 18))
-        c.fill_gradient((34, 18, 22), (18, 14, 26))
-        c.circle(self.prey[0], self.prey[1], 0.04, (90, 230, 120))    # green prey
-        c.circle(self.agent[0], self.agent[1], 0.04, (230, 120, 200)) # pink chaser
-        return c.to_array()
-
-    def expert_action(self, noise: float = 0.0) -> np.ndarray:
-        d = self.prey - self.agent
-        return self._stick_from_direction(d[0], d[1], noise, self.rng)
+        return self.reached
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +279,12 @@ class ChaserGame(ToyGame):
 # ---------------------------------------------------------------------------
 GAME_REGISTRY = {
     ReacherGame.name: ReacherGame,
-    DodgerGame.name: DodgerGame,
+    AvoiderGame.name: AvoiderGame,
     ChaserGame.name: ChaserGame,
 }
 
 # Convention used by the transfer experiment: train on these, hold out the rest.
-TRAIN_GAMES = ["reacher", "dodger"]
+TRAIN_GAMES = ["reacher", "avoider"]
 HELDOUT_GAMES = ["chaser"]
 
 
