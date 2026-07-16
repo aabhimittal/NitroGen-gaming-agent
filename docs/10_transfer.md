@@ -34,20 +34,23 @@ from nitrogen.benchmark.evaluate import transfer_report
 report = transfer_report(model, episodes=30)   # unseen chaser ≈ 0% zero-shot
 ```
 
-The **few-shot** signal, on the other hand, reproduces cleanly and *is* the
-paper's actual claim. `few_shot_transfer` fine-tunes the pretrained policy on a
-handful of Chaser episodes and compares it to a model trained from scratch on the
-exact same few episodes:
+The **few-shot** setting, on the other hand, is the paper's actual claim.
+`few_shot_transfer` fine-tunes the pretrained policy on a handful of Chaser
+episodes and compares it to a model trained from scratch on the *exact same* few
+episodes:
 
 ```python
 from nitrogen.benchmark.evaluate import few_shot_transfer
 r = few_shot_transfer(pretrained_model, game="chaser", n_episodes=12, finetune_steps=400)
-# {"from_scratch": ~low, "pretrained": ~high, "relative_improvement": large +%}
+# {"from_scratch": ..., "pretrained": ..., "relative_improvement": ...}
 ```
 
 Chaser shares Reacher's skill — *steer toward the warm salient object* — so the
-pretrained policy adapts from a few demos far better than a fresh model can learn
-from the same tiny dataset. That gap is the transfer payoff, measured on a laptop.
+hypothesis is that the pretrained policy adapts from a few demos better than a
+fresh model can learn from the same tiny dataset. The experiment computes both
+numbers live (also printed by `examples/quickstart.py`), so you see the actual
+gap on your machine rather than a hard-coded figure. Expect run-to-run variance
+at this scale — the mechanism, not a specific percentage, is the point.
 
 ### Reproduce it
 
