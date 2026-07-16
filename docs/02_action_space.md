@@ -66,7 +66,7 @@ categorical output head required.
 Because the action space is identical across games, the *skill* the model learns
 — "when the objective is up-and-to-the-right, push the left stick up-and-to-the-
 right" — is expressed in the same coordinates in every game. A policy trained on
-Reacher and Dodger can be dropped into an unseen Chaser game and its learned
+Reacher and Avoider can be dropped into an unseen Chaser game and its learned
 stick behavior still means the same thing. That is precisely the cross-game
 transfer we measure in [ch 10](10_transfer.md).
 

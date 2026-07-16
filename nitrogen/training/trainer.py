@@ -90,18 +90,30 @@ def train(
     model_cfg: NitroGenConfig | None = None,
     episodes: List[Episode] | None = None,
     on_log: Callable[[int, float, float], None] | None = None,
+    init_model: NitroGen | None = None,
 ) -> tuple[NitroGen, EMA]:
-    """Run behavior cloning. Returns the trained model and its EMA copy."""
+    """Run behavior cloning. Returns the trained model and its EMA copy.
+
+    Pass ``init_model`` to **warm-start** from a pretrained policy (this is how the
+    few-shot transfer experiment fine-tunes a NitroGen model on a new game).
+    """
     cfg = cfg or TrainConfig()
     torch.manual_seed(cfg.seed)
     device = torch.device(cfg.device)
 
     if episodes is None:
         episodes = build_dataset(cfg)
-    dataset = FrameActionChunkDataset(episodes, chunk_size=cfg.chunk_size)
+    # pad_last=False → train only on frames with a full real action chunk ahead,
+    # so the policy never learns from end-of-episode null padding.
+    dataset = FrameActionChunkDataset(episodes, chunk_size=cfg.chunk_size, pad_last=False)
     loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
 
-    model = NitroGen(model_cfg or NitroGenConfig(chunk_size=cfg.chunk_size)).to(device)
+    if init_model is not None:
+        model = copy.deepcopy(init_model).to(device)
+        for p in model.parameters():  # EMA copies come frozen — re-enable grads
+            p.requires_grad_(True)
+    else:
+        model = NitroGen(model_cfg or NitroGenConfig(chunk_size=cfg.chunk_size)).to(device)
     model.train()
     ema = EMA(model, cfg.ema_decay)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)

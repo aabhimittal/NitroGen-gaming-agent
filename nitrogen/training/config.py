@@ -14,7 +14,7 @@ class TrainConfig:
     games: List[str] = field(default_factory=lambda: list(TRAIN_GAMES))
     episodes_per_game: int = 80
     expert_noise: float = 0.15
-    chunk_size: int = 16
+    chunk_size: int = 8
 
     # optimization
     batch_size: int = 64
@@ -28,7 +28,7 @@ class TrainConfig:
     decay_frac: float = 0.2
 
     # exponential moving average of weights
-    ema_decay: float = 0.999
+    ema_decay: float = 0.99
 
     # image augmentation strength (0 disables)
     aug_brightness: float = 0.1

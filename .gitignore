@@ -26,3 +26,7 @@ data/
 
 # OS
 .DS_Store
+
+# local scratch experiment files
+scratch_*
+tf_confirm.*

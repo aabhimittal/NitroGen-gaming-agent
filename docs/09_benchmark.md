@@ -15,14 +15,18 @@ models on.
 
 We ship a small family of visually distinct games in
 [`toy_game.py`](../nitrogen/envs/toy_game.py). They look different but all exercise
-the same generalist skill — *look at the frame and push the left stick toward what
-matters* — which is exactly what makes cross-game transfer meaningful.
+the same generalist skill — *find the one salient object and push the left stick
+toward or away from it* — which is exactly what makes cross-game transfer
+meaningful. Each is rendered **agent-centric**: the controllable avatar is a fixed
+reticle at screen center and the world is drawn around it (as most 1st/3rd-person
+games do), so the task reduces to single-object visuomotor control the model can
+actually learn from pixels.
 
 | Game | Genre analog | Skill | Success |
 |------|--------------|-------|---------|
-| **Reacher** | 3D "go to the objective" | drive the avatar onto a target | reach the target |
-| **Dodger** | 2D platformer reflex | slide a paddle to avoid a falling hazard | survive the episode |
-| **Chaser** | pursuit / exploration | catch a fleeing orb (held out for transfer) | catch the prey |
+| **Reacher** | "go to the objective" | push the reticle onto a stationary beacon | reach the beacon |
+| **Avoider** | reflex dodging | strafe *away* so an incoming asteroid misses the reticle | survive the episode |
+| **Chaser** | pursuit / exploration | push *toward* a fleeing orb until you catch it (held out for transfer) | catch the orb |
 
 Every game implements the same tiny interface and is controlled through the
 shared gamepad ([ch 2](02_action_space.md)):
@@ -46,8 +50,8 @@ reports per-game success plus the mean:
 
 ```python
 from nitrogen.benchmark.evaluate import evaluate_suite
-scores = evaluate_suite(model, ["reacher", "dodger"], episodes=30)
-# {"reacher": 0.9, "dodger": 0.8, "mean": 0.85}
+scores = evaluate_suite(model, ["reacher", "avoider"], episodes=30)
+# {"reacher": 0.9, "avoider": 0.8, "mean": 0.85}
 ```
 
 Fresh seeds (offset well past the training seeds) mean evaluation states were

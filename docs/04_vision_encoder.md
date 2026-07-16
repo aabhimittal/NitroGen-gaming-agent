@@ -43,6 +43,15 @@ Key points, each mirrored in the code:
   spatial set so it can attend region-by-region.
 - **Pre-norm Transformer blocks** with fused scaled-dot-product attention
   (`F.scaled_dot_product_attention`, which uses FlashAttention when available).
+- **CoordConv input.** Before patchifying we append two channels — normalized `x`
+  and `y` coordinate maps — to the RGB frame. Convolutions and ViTs are
+  translation-equivariant and notoriously bad at reporting the *absolute
+  position* of a feature, yet our control tasks are exactly "the bright object is
+  *over there* → push toward/away from it." Handing the network explicit
+  coordinates (Liu et al., 2018) makes that localization easy. At the real
+  NitroGen scale a pretrained SigLIP-2 encoder localizes fine without this; at our
+  tiny from-scratch scale it is the difference between a policy that plays and one
+  that idles.
 
 ```python
 from nitrogen.models.vision_encoder import VisionEncoder, VisionConfig

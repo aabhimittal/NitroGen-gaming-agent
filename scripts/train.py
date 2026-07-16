@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m scripts.train --games reacher dodger --steps 1500 --out checkpoints/nitrogen.pt
+    python -m scripts.train --games reacher avoider --steps 1500 --out checkpoints/nitrogen.pt
 """
 
 from __future__ import annotations

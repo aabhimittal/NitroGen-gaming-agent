@@ -61,15 +61,46 @@ The long flat middle is the point: you can train for as long as your compute
 budget allows on the plateau and only *then* schedule the decay, without having
 committed to a total step count up front (unlike a pure cosine schedule).
 
+## Data design: why the chunk must be predictable from the frame
+
+Getting this tiny model to actually *play* (not just drive the loss down) came
+down to the **training data**, not the architecture. Three lessons, learned the
+hard way, that are worth internalizing because they generalize to real BC:
+
+1. **The whole chunk must be a predictable function of the conditioning frame.**
+   We predict `T` future actions from *one* frame. If anything in that window is
+   *unknowable* from the frame — e.g. an object that randomly respawns in a new
+   place mid-chunk — those steps become irreducible noise in the target. Flow
+   matching then hedges toward the mean and the policy collapses into mush. Our
+   toy games therefore use only *deterministic* object dynamics (no random jumps),
+   so the chunk is a clean function of what's on screen.
+
+2. **Watch the class balance of your actions.** Early versions let each episode
+   keep running after the goal was reached; the agent then sat still and emitted a
+   flood of "do nothing" frames that *dominated* the dataset. The policy dutifully
+   learned to do nothing. The fix: end reacher/chaser episodes on contact, so the
+   data is pure "steer toward the objective." (Avoider never idles — it is always
+   pushing the hazard away.)
+
+3. **EMA needs enough steps to catch up.** With decay `0.999`, after only ~1k
+   steps the EMA weights are still ~40% their random initialization — so the
+   "smoothed" model you evaluate is half-untrained and looks broken. For short
+   runs use a faster decay (this repo defaults to `0.99`).
+
+These are exactly the un-glamorous data/optimization details that separate a BC
+policy that works from one that silently doesn't — the model was capable the
+whole time (it memorizes a clean image→action mapping to ~0.99 correlation).
+
 ## Running it
 
 ```bash
 # tiny end-to-end run (a few minutes on CPU at the default 128px)
-python -m scripts.train --games reacher dodger --steps 1500 --out checkpoints/nitrogen.pt
+python -m scripts.train --games reacher avoider --steps 1500 --out checkpoints/nitrogen.pt
 ```
 
 The trainer saves the **EMA** weights — those are what you evaluate and deploy.
 Watch the flow-matching loss fall (a healthy run drops from ~0.8 to well under
-0.1 as the head learns to reconstruct expert action chunks).
+0.1 as the head learns to reconstruct expert action chunks); on the toy suite the
+resulting policy reaches ~100% closed-loop success on the games it trained on.
 
 Continue to [**8 · Inference: action chunking →**](08_inference.md)

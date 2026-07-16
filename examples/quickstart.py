@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import torch
 
-from nitrogen.benchmark.evaluate import evaluate_suite, transfer_report
+from nitrogen.benchmark.evaluate import evaluate_suite, few_shot_transfer
 from nitrogen.data.overlay_extraction import evaluate_extraction
 from nitrogen.action_space import GamepadAction, BUTTON_NAMES
 from nitrogen.training.config import TrainConfig
@@ -45,23 +45,24 @@ def main() -> None:
           f"button acc={m['button_accuracy']:.3f}")
 
     # 1-2) Collect data and behavior-clone a policy.
-    cfg = TrainConfig(games=["reacher", "dodger"], episodes_per_game=40,
-                      steps=800, batch_size=48, log_every=100)
+    cfg = TrainConfig(games=["reacher", "avoider"], episodes_per_game=80,
+                      steps=1500, batch_size=64, log_every=250)
     print("\n[training] behavior cloning with flow matching ...")
     _, ema = train(cfg)
     policy = ema.shadow
 
-    # 3) Benchmark on the games it trained on.
+    # 3) Benchmark on the games it trained on (should be ~100%).
     print("\n[benchmark] closed-loop success on seen games:")
-    scores = evaluate_suite(policy, ["reacher", "dodger"], episodes=20)
+    scores = evaluate_suite(policy, ["reacher", "avoider"], episodes=20)
     for g, s in scores.items():
         print(f"    {g:10s}: {s:.0%}")
 
-    # 4) Transfer: a game the policy never saw during training.
-    print("\n[transfer] seen vs unseen games:")
-    report = transfer_report(policy, episodes=20)
-    for split, sc in report.items():
-        print(f"    {split:6s}: " + ", ".join(f"{g}={v:.0%}" for g, v in sc.items()))
+    # 4) Few-shot transfer: adapt to the unseen Chaser game from a few episodes,
+    #    vs a model trained from scratch on the same handful of demos.
+    print("\n[transfer] few-shot adaptation to the unseen game (chaser):")
+    r = few_shot_transfer(policy, game="chaser", n_episodes=12, finetune_steps=400)
+    print(f"    from scratch : {r['from_scratch']:.0%}")
+    print(f"    pretrained   : {r['pretrained']:.0%}   (relative gain {r['relative_improvement']:+.0%})")
 
 
 if __name__ == "__main__":

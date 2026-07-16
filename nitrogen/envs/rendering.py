@@ -49,5 +49,18 @@ class Canvas:
         ya, yb = np.clip([ya, yb], 0, s)
         self.buf[ya:yb, xa:xb] = np.array(color, dtype=np.uint8)
 
+    def ring(self, cx: float, cy: float, radius: float, thickness: float, color):
+        """Hollow circle (annulus) — handy for a fixed reticle at screen center."""
+        cx_px, cy_px = cx * self.size, cy * self.size
+        r_out, r_in = radius * self.size, max(0.0, (radius - thickness) * self.size)
+        d2 = (self._xs - cx_px) ** 2 + (self._ys - cy_px) ** 2
+        mask = (d2 <= r_out ** 2) & (d2 >= r_in ** 2)
+        self.buf[mask] = np.array(color, dtype=np.uint8)
+
+    def crosshair(self, cx: float, cy: float, radius: float, color):
+        """A small reticle: a ring plus a center dot. Marks the (fixed) avatar."""
+        self.ring(cx, cy, radius, radius * 0.35, color)
+        self.circle(cx, cy, radius * 0.22, color)
+
     def to_array(self) -> np.ndarray:
         return self.buf.copy()

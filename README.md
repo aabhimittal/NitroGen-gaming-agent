@@ -77,8 +77,8 @@ python examples/quickstart.py
 Or drive the pieces individually:
 
 ```bash
-python -m scripts.generate_data --games reacher dodger --episodes 80 --out data/train.npz
-python -m scripts.train        --games reacher dodger --steps 1500 --out checkpoints/nitrogen.pt
+python -m scripts.generate_data --games reacher avoider --episodes 80 --out data/train.npz
+python -m scripts.train        --games reacher avoider --steps 1500 --out checkpoints/nitrogen.pt
 python -m scripts.evaluate     --ckpt checkpoints/nitrogen.pt --transfer
 python -m scripts.demo         --ckpt checkpoints/nitrogen.pt --game reacher --out assets/reacher.gif
 ```
@@ -117,7 +117,7 @@ nitrogen/
 │   └── dataset.py             # single-frame → 16-step action-chunk pairs
 ├── envs/
 │   ├── rendering.py           # tiny numpy software renderer
-│   └── toy_game.py            # (ch 9) Reacher / Dodger / Chaser + experts
+│   └── toy_game.py            # (ch 9) Reacher / Avoider / Chaser + experts
 ├── training/
 │   ├── config.py
 │   └── trainer.py             # (ch 7) AdamW · WSD schedule · EMA · augmentation
@@ -162,12 +162,24 @@ Read these in order — each is short and links to the exact code it explains.
 - **overlay-based action labeling** as the data-construction principle.
 
 **Simplified so it runs anywhere:**
-- the vision encoder is a small from-scratch ViT, not pretrained SigLIP-2 weights,
-- data is scripted-expert rollouts in toy games, not 40,000 h of real video, and
-  overlay extraction reads a clean synthetic HUD instead of a learned SegFormer,
-- the model is ~10M params at 128px, not 500M at 256px,
-- three toy games stand in for 1,000+ real titles — so absolute numbers here
-  illustrate the *setup*, not the paper's magnitudes.
+- the vision encoder is a small from-scratch ViT (plus two CoordConv coordinate
+  channels to make object localization tractable at tiny scale), not pretrained
+  SigLIP-2 weights,
+- cross-attention to the image is left **always-on** rather than AdaLN-zero-gated,
+  so the tiny model actually learns to look at the frame (see [ch 6](docs/06_action_head.md)),
+- data is scripted-expert rollouts in toy *agent-centric* games, not 40,000 h of
+  real video, and overlay extraction reads a clean synthetic HUD instead of a
+  learned SegFormer,
+- the toy chunk horizon is 8 (the paper uses 16); the model is ~10M params at
+  128px, not 500M at 256px,
+- three toy games stand in for 1,000+ real titles, so transfer here is shown
+  **few-shot** (the paper's low-data claim), not the emergent zero-shot breadth
+  that only appears at scale.
+
+On the toy suite the trained policy reaches **~100% closed-loop success** on the
+games it was trained on (Reacher, Avoider), and few-shot fine-tuning on a dozen
+episodes of the held-out Chaser game clearly beats training from scratch on the
+same data — the transferable-skill payoff, in miniature.
 
 ---
 
