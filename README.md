@@ -80,6 +80,7 @@ Or drive the pieces individually:
 python -m scripts.generate_data --games reacher avoider --episodes 80 --out data/train.npz
 python -m scripts.train        --games reacher avoider --steps 1500 --out checkpoints/nitrogen.pt
 python -m scripts.evaluate     --ckpt checkpoints/nitrogen.pt --transfer
+python -m scripts.evaluate     --ckpt checkpoints/nitrogen.pt --robustness
 python -m scripts.demo         --ckpt checkpoints/nitrogen.pt --game reacher --out assets/reacher.gif
 ```
 
@@ -92,6 +93,21 @@ from nitrogen import NitroGen, NitroGenConfig
 model = NitroGen(NitroGenConfig())          # ~10M-param policy
 frame = np.random.rand(256, 256, 3)         # your game frame (H, W, 3)
 action_chunk = model.act(frame)             # (16, 18) raw gamepad vectors
+```
+
+Ship it against a real game — sanitized pixels, a supervised sampler, and
+hardware-legal actions ([ch 11](docs/11_deployment.md)):
+
+```python
+from nitrogen.deploy import PolicyRuntime
+
+runtime = PolicyRuntime.from_model(model, seed=0)   # seed => reproducible rollouts
+report = runtime.step(capture.grab())               # never raises, never stalls
+report.action                                       # always a legal gamepad action
+```
+
+```bash
+python -m examples.deployment    # one episode against a deliberately broken capture
 ```
 
 > **Resolution note.** The paper encodes 256×256 frames (256 patch tokens). The
@@ -121,13 +137,19 @@ nitrogen/
 ├── training/
 │   ├── config.py
 │   └── trainer.py             # (ch 7) AdamW · WSD schedule · EMA · augmentation
+├── deploy/
+│   ├── frames.py              # (ch 11) capture hardening: dtype/layout/NaN/black/frozen
+│   ├── safety.py              # (ch 11) hardware-legal, human-plausible actions
+│   ├── controller.py          # (ch 11) chunk → per-tick: ensembling, latency, starvation
+│   └── runtime.py             # (ch 11) supervised loop, circuit breaker, metrics
 └── benchmark/
-    └── evaluate.py            # (ch 8/9/10) closed-loop success, transfer report
+    ├── evaluate.py            # (ch 8/9/10) closed-loop success, transfer report
+    └── robustness.py          # (ch 11) success under capture faults, naive vs. guarded
 
-docs/     # 10 step-by-step chapters (start at 01_overview.md)
+docs/     # 11 step-by-step chapters (start at 01_overview.md)
 scripts/  # generate_data · train · evaluate · demo
-examples/ # quickstart.py — the whole thing in one file
-tests/    # pytest: action space, flow matching, model, envs & data
+examples/ # quickstart.py — the whole thing in one file; deployment.py — the hardened loop
+tests/    # pytest: action space, flow matching, model, envs & data, deployment, robustness
 ```
 
 ---
@@ -146,6 +168,7 @@ Read these in order — each is short and links to the exact code it explains.
 8. [Inference — action chunking and closed-loop play](docs/08_inference.md)
 9. [The multi-game benchmark](docs/09_benchmark.md)
 10. [Cross-game transfer — the generalist payoff](docs/10_transfer.md)
+11. [Deployment — running the policy against a real game](docs/11_deployment.md)
 
 ---
 
@@ -193,6 +216,18 @@ pytest
 Covers the action-space round-trip, flow-matching invariants (path endpoints,
 velocity target, exact ODE recovery), model shapes + single-batch overfitting,
 environment/expert competence, and overlay-extraction quality.
+
+Roughly half the suite is **industrial edge cases** — the things that only show
+up once a real capture pipeline and a real gamepad are on the other end:
+
+| Area | What is pinned down |
+|---|---|
+| `test_deploy_frames.py` | channel-first/BGR/RGBA/grayscale inputs, uint16 and float-in-`[0,255]` captures, NaN and HDR pixels, ultrawide letterboxing, black and frozen-capture detection |
+| `test_deploy_safety.py` | unit-circle clamping, radial (not axis-wise) deadzones, slew limiting, press/release hysteresis and debounce, impossible d-pad combinations, blocked menu buttons |
+| `test_deploy_controller.py` | chunk seams and ensembling, latency compensation, starvation policies, bounded memory under rapid replanning |
+| `test_deploy_runtime.py` | a throwing policy, NaN chunks, the circuit breaker opening and recovering, buttons never latching while idle, an end-to-end episode against a hostile capture stream |
+| `test_model_edge_cases.py` | empty batches, chunk size 1, a single ODE step, odd resolutions, seeded determinism, saturated targets |
+| `test_data_edge_cases.py` | chunk padding at episode boundaries, ragged save/load round trips, overlay footage with no visible widget |
 
 ---
 
