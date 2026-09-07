@@ -16,7 +16,7 @@ env/
 # NitroGen artifacts
 runs/
 checkpoints/
-data/
+/data/
 *.pt
 *.ckpt
 *.mp4
